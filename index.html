@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth h-full overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    
+    <title>Synapse // Focus & Resilience</title>
+    <meta name="description" content="A premium, offline-first exam productivity, hydration, and habit-tracking dashboard." />
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  </head>
+  <body class="h-full w-full bg-[#F2F2F7] text-gray-900 font-sans">
+    
+    <div id="app" class="flex flex-col-reverse md:flex-row h-full w-full">
+      
+      <nav id="main-nav" class="w-full bg-white border-t border-gray-200 pb-safe pt-2 px-6 flex justify-between md:w-64 md:h-full md:flex-col md:border-t-0 md:border-r md:pt-8 md:px-4 md:justify-start md:space-y-4 shrink-0 z-50 relative">
+        
+        <div class="hidden md:flex items-center gap-3 mb-8 px-2">
+          <div class="flex items-center justify-center w-10 h-10 rounded-2xl bg-blue-600 text-white font-bold text-xl shadow-sm">S</div>
+          <span class="font-outfit font-bold text-xl tracking-tight text-gray-900">SYNAPSE</span>
+        </div>
+
+        <button data-view="home" class="nav-btn flex flex-col md:flex-row items-center gap-1 md:gap-3 text-blue-600 md:bg-blue-50 md:px-4 md:py-3 rounded-2xl transition-colors">
+          <span class="text-2xl md:text-xl">🏠</span>
+          <span class="text-[10px] md:text-sm font-semibold tracking-wide">Home</span>
+        </button>
+        <button data-view="study" class="nav-btn flex flex-col md:flex-row items-center gap-1 md:gap-3 text-gray-400 hover:text-gray-900 md:hover:bg-gray-100 md:px-4 md:py-3 rounded-2xl transition-colors">
+          <span class="text-2xl md:text-xl">📚</span>
+          <span class="text-[10px] md:text-sm font-semibold tracking-wide">Study</span>
+        </button>
+        <button data-view="analysis" class="nav-btn flex flex-col md:flex-row items-center gap-1 md:gap-3 text-gray-400 hover:text-gray-900 md:hover:bg-gray-100 md:px-4 md:py-3 rounded-2xl transition-colors">
+          <span class="text-2xl md:text-xl">📊</span>
+          <span class="text-[10px] md:text-sm font-semibold tracking-wide">Analysis</span>
+        </button>
+        <button data-view="settings" class="nav-btn flex flex-col md:flex-row items-center gap-1 md:gap-3 text-gray-400 hover:text-gray-900 md:hover:bg-gray-100 md:px-4 md:py-3 rounded-2xl transition-colors">
+          <span class="text-2xl md:text-xl">⚙️</span>
+          <span class="text-[10px] md:text-sm font-semibold tracking-wide">Settings</span>
+        </button>
+      </nav>
+
+      <main class="flex-1 overflow-y-auto relative overscroll-contain touch-manipulation z-10">
+        <div id="view-container"></div>
+      </main>
+
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
