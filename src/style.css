@@ -42,6 +42,24 @@
 
 /* ===== Analysis Tab Animations ===== */
 
+/* Focus-visible ring for keyboard navigation */
+button:focus-visible, [role="button"]:focus-visible, .nav-btn:focus-visible,
+.range-tab:focus-visible, .goal-action-btn:focus-visible {
+  outline: 2px solid #007AFF;
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+/* View transition animation */
+@keyframes viewFadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.view-enter {
+  animation: viewFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* Card entrance: fade + slide up */
 @keyframes fadeSlideUp {
   from { opacity: 0; transform: translateY(24px) scale(0.98); }
@@ -193,6 +211,10 @@
   background: #007AFF;
   color: white;
   box-shadow: 0 2px 12px rgba(0, 122, 255, 0.3);
+}
+
+.range-tab:active {
+  transform: scale(0.95);
 }
 
 /* Stat card value animation */

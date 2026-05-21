@@ -112,8 +112,21 @@ function getStudySummary(sessions) {
   };
 }
 
+function getTrendDays(sessions, dateRange) {
+  if (dateRange === '7days') return 7;
+  if (dateRange === '30days') return 30;
+  if (dateRange === 'month') {
+    const now = new Date();
+    return now.getDate();
+  }
+  // 'all' — compute from oldest session, cap at 365
+  const oldest = sessions.reduce((min, s) => Math.min(min, s.start_time || s.timestamp || Infinity), Date.now());
+  const diff = Math.ceil((Date.now() - oldest) / 86400000);
+  return Math.min(Math.max(diff, 1), 365);
+}
+
 function getWeeklyTrend(sessions, dateRange) {
-  const days = dateRange === '7days' ? 7 : dateRange === '30days' ? 30 : 7;
+  const days = getTrendDays(sessions, dateRange);
   const map = {};
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(Date.now() - i * 86400000);
@@ -313,7 +326,7 @@ function getHydrationSummary(logs) {
 }
 
 function getHydrationTrend(logs, dateRange) {
-  const days = dateRange === '7days' ? 7 : 30;
+  const days = getTrendDays(logs, dateRange);
   const map = {};
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(Date.now() - i * 86400000);

@@ -44,3 +44,6 @@ Thumbs.db
 
 # Antigravity CLI (if applicable)
 .antigravitycli/
+
+# PWA Raw Asset Generators
+appstore-images/

@@ -15,8 +15,8 @@ class SynapseModal {
     this.backdropEl = null;
     this.modalEl = null;
     
-    // Bind event handlers
-    this.handleKeyDown = this.handleKeyDown.bind(this);
+    // Bind event handlers once for clean GC removal
+    this._boundKeydown = this.handleKeyDown.bind(this);
     this.close = this.close.bind(this);
   }
 
@@ -124,7 +124,7 @@ class SynapseModal {
     document.body.appendChild(this.backdropEl);
 
     // 6. Focus Trap & Key Listeners
-    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keydown', this._boundKeydown);
 
     // Prevent body scrolling (Android-compatible fixed pattern)
     this._savedScrollY = window.scrollY;
@@ -153,7 +153,7 @@ class SynapseModal {
       }
       
       // Cleanup events
-      window.removeEventListener('keydown', this.handleKeyDown);
+      window.removeEventListener('keydown', this._boundKeydown);
       document.body.style.position = '';
       document.body.style.top = '';
       document.body.style.width = '';

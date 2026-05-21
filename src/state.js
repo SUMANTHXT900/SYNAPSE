@@ -9,36 +9,17 @@ const state = {
   activeGoalName: null,
   activeWorkoutSession: null,
   dailyWaterScore: 0,
-  analysisDateRange: '7days'
+  analysisDateRange: '7days',
+  updateAvailable: false,
+  isCheckingForUpdates: false,
+  updateStatusText: 'Running the latest version of Synapse',
+  appVersion: '0.4.0',
+  versionNote: 'PWA-Ready milestone: rich install manifest, app icons, screenshots, apple touch icon',
+  updateLogs: []
 };
 
 // Set of subscriber callbacks
 const subscribers = new Set();
-
-// Reactive Proxy handler to intercept state edits and dispatch events
-const stateProxy = new Proxy(state, {
-  set(target, property, value) {
-    if (target[property] === value) return true;
-    
-    const oldValue = target[property];
-    target[property] = value;
-    
-    // Notify all subscribers of the state change
-    subscribers.forEach(callback => {
-      try {
-        callback({ ...target }, property, value, oldValue);
-      } catch (err) {
-        console.error('❌ [State Manager] Error in subscriber callback:', err);
-      }
-    });
-    
-    return true;
-  },
-  get(target, property) {
-    // Return a shallow copy of objects or nested states to prevent accidental direct mutation
-    return target[property];
-  }
-});
 
 /**
  * Get a read-only snapshot of the current state
@@ -53,18 +34,29 @@ export function getState() {
  * @param {Object} updates 
  */
 export function setState(updates) {
-  Object.keys(updates).forEach(key => {
+  let hasChanges = false;
+  const changedKeys = [];
+
+  for (const key in updates) {
     if (key in state) {
-      stateProxy[key] = updates[key];
+      if (state[key] !== updates[key]) {
+        state[key] = updates[key];
+        hasChanges = true;
+        changedKeys.push(key);
+      }
     } else {
-      console.warn(`⚠️ [State Manager] Attempted to set unregistered state property: "${key}"`);
+      console.warn(`[State] Attempted to set unknown key: ${key}`);
     }
-  });
+  }
+
+  if (hasChanges) {
+    subscribers.forEach(callback => callback(getState(), changedKeys));
+  }
 }
 
 /**
  * Subscribe to state updates. Returns an unsubscribe function.
- * @param {Function} callback - Invoked as callback(state, changedKey, newValue, oldValue)
+ * @param {Function} callback - Invoked as callback(state, changedKeys)
  * @returns {Function} Unsubscribe function
  */
 export function subscribe(callback) {
@@ -76,7 +68,7 @@ export function subscribe(callback) {
   
   // Call immediately with current state for initial bootstrap
   try {
-    callback({ ...state }, null, null, null);
+    callback(getState(), null);
   } catch (err) {
     console.error('❌ [State Manager] Error in initial subscriber callback:', err);
   }

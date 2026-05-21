@@ -47,13 +47,17 @@ export function renderGoalCard(goal) {
   const sessionCount = goal.sessions ? goal.sessions.filter(s => s.end_time != null).length : 0;
   const timeStr = goal.totalTimeMs > 0 ? formatDuration(goal.totalTimeMs) : 'No time logged';
 
+  const hasProgress = goal.totalTimeMs > 0 || sessionCount > 0;
+  const displayStatus = (goal.status === 'pending' && hasProgress) ? 'Paused' : statusLabel;
+  const displayStatusClass = (goal.status === 'pending' && hasProgress) ? 'bg-purple-100 text-purple-700 border-purple-200' : statusClass;
+
   return `
     <div data-goal-id="${goal.id}" class="goal-card bg-white rounded-3xl p-5 shadow-sm border border-gray-100 transition-all hover:shadow-md">
       <div class="flex items-start justify-between gap-3 mb-3">
         <div class="flex-1 min-w-0">
           <h4 class="text-base font-bold text-gray-900 truncate">${goal.subject}</h4>
           <div class="flex items-center gap-2 mt-1">
-            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${statusClass}">${statusLabel}</span>
+            <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${displayStatusClass}">${displayStatus}</span>
             <span class="text-xs text-gray-400 font-medium">${sessionCount} sessions · ${timeStr}</span>
           </div>
         </div>
@@ -142,22 +146,33 @@ export function renderHome(container, callbacks) {
           </button>
         </div>
 
-        <div id="workout-card" class="bg-white rounded-3xl p-6 shadow-sm flex flex-col justify-between min-h-[300px] md:min-h-[340px] border border-gray-100">
+        <div class="bg-white rounded-3xl p-6 shadow-sm flex flex-col justify-between min-h-[300px] md:min-h-[340px] border border-gray-100">
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between">
               <div class="w-10 h-10 rounded-2xl bg-orange-50 flex items-center justify-center text-xl">⚡</div>
-              <span class="text-[10px] font-bold text-orange-600 uppercase tracking-widest bg-orange-50 px-2 py-1 rounded-lg">Vitality</span>
+              <span class="text-[10px] font-bold text-orange-600 uppercase tracking-widest bg-orange-50 px-2 py-1 rounded-lg">Activity</span>
             </div>
-            <h3 class="text-xl font-outfit font-bold text-gray-900 mt-2">Workout</h3>
-            <p class="text-sm text-gray-500 font-medium">Coming soon — your physical endurance tracker.</p>
+            <h3 class="text-xl font-outfit font-bold text-gray-900 mt-2">Today's Progress</h3>
+            <p class="text-sm text-gray-500 font-medium">Your daily performance at a glance.</p>
           </div>
-          <div class="my-4" id="workout-status">
-            <div class="flex items-center gap-2 border-l-4 border-gray-200 pl-4 py-3">
-              <span class="text-lg font-semibold text-gray-400">Coming soon</span>
+          <div class="my-4">
+            <div class="space-y-3">
+              <div class="flex items-center justify-between border-l-4 border-purple-500 pl-3 py-1">
+                <span class="text-sm text-gray-500 font-medium">Study Time</span>
+                <span id="today-study-time" class="text-lg font-outfit font-bold text-gray-900">0m</span>
+              </div>
+              <div class="flex items-center justify-between border-l-4 border-blue-500 pl-3 py-1">
+                <span class="text-sm text-gray-500 font-medium">Water Score</span>
+                <span class="text-lg font-outfit font-bold text-gray-900"><span id="today-water-score">0</span> pts</span>
+              </div>
+              <div class="flex items-center justify-between border-l-4 border-emerald-500 pl-3 py-1">
+                <span class="text-sm text-gray-500 font-medium">Goals Active</span>
+                <span id="today-goals-count" class="text-lg font-outfit font-bold text-gray-900">0</span>
+              </div>
             </div>
           </div>
-          <button id="btn-start-workout" class="w-full min-h-[56px] rounded-2xl bg-gray-200 text-gray-400 font-bold text-base cursor-not-allowed flex items-center justify-center gap-2" disabled>
-            Coming Soon
+          <button id="btn-today-goals" class="w-full min-h-[56px] rounded-2xl bg-orange-50 hover:bg-orange-100 text-orange-700 font-bold text-base transition-colors flex items-center justify-center gap-2">
+            View Goals
           </button>
         </div>
       </div>
@@ -287,9 +302,9 @@ export function renderStudy(container, callbacks) {
         <div class="flex items-center justify-center w-8 h-8 rounded-xl bg-blue-600 text-white font-bold text-sm shadow-sm">S</div>
         <span class="font-outfit font-bold text-lg tracking-tight text-gray-900">SYNAPSE</span>
       </div>
-      <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold tracking-widest uppercase">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-        Offline
+      <div id="db-status-mobile-study" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold tracking-widest uppercase">
+        <span id="db-dot-mobile-study" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+        <span id="db-label-mobile-study">Connected</span>
       </div>
     </header>
 
@@ -332,9 +347,9 @@ export function renderSettings(container, callbacks) {
         <div class="flex items-center justify-center w-8 h-8 rounded-xl bg-blue-600 text-white font-bold text-sm shadow-sm">S</div>
         <span class="font-outfit font-bold text-lg tracking-tight text-gray-900">SYNAPSE</span>
       </div>
-      <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold tracking-widest uppercase">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-        Offline
+      <div id="db-status-mobile-settings" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold tracking-widest uppercase">
+        <span id="db-dot-mobile-settings" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+        <span id="db-label-mobile-settings">Connected</span>
       </div>
     </header>
 
@@ -349,7 +364,7 @@ export function renderSettings(container, callbacks) {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
         <div class="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
           <div class="flex items-center gap-4 mb-6">
-            <div class="w-16 h-16 rounded-3xl bg-blue-600 flex items-center justify-center text-white font-bold text-2xl shadow-sm">${displayName.charAt(0).toUpperCase()}</div>
+            <div class="w-16 h-16 rounded-3xl bg-blue-600 flex items-center justify-center text-white font-bold text-2xl shadow-sm">${state.userName ? displayName.charAt(0).toUpperCase() : '👤'}</div>
             <div>
               <h3 class="text-xl font-outfit font-bold text-gray-900">${displayName}</h3>
               <p class="text-sm text-gray-500 font-medium">Synapse User</p>
@@ -368,17 +383,45 @@ export function renderSettings(container, callbacks) {
           <div class="flex flex-col gap-3 text-sm text-gray-500 font-medium">
             <div class="flex items-center justify-between py-2 border-b border-gray-100">
               <span>Version</span>
-              <span class="font-bold text-gray-900">0.2.0</span>
+              <span class="font-bold text-gray-900">v${state.appVersion}</span>
             </div>
             <div class="flex items-center justify-between py-2 border-b border-gray-100">
               <span>Storage</span>
               <span class="font-bold text-emerald-600">Offline (IndexedDB)</span>
             </div>
-            <div class="flex items-center justify-between py-2">
+            <div class="flex items-center justify-between py-2 border-b border-gray-100">
               <span>Built with</span>
               <span class="font-bold text-gray-900">Vanilla JS + Dexie</span>
             </div>
+            ${state.versionNote ? `
+            <div class="pt-2 mt-1 border-t border-dashed border-gray-200">
+              <p class="text-[10px] text-gray-400 leading-relaxed">${state.versionNote}</p>
+            </div>
+            ` : ''}
           </div>
+        </div>
+      </div>
+
+      <!-- App Update Center -->
+      <div class="mt-6">
+        <div class="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-outfit font-bold text-gray-900">System Update</h3>
+            <div class="w-10 h-10 rounded-2xl bg-blue-50 flex items-center justify-center text-xl">🔄</div>
+          </div>
+          <p id="pwa-status-text" class="text-xs text-gray-400 font-medium mb-4">${state.updateStatusText}</p>
+          <div class="flex flex-col gap-2" id="pwa-actions-container">
+            <button id="btn-check-updates" class="w-full min-h-[50px] rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-700 font-bold text-sm transition-colors flex items-center justify-center gap-2">
+              Check for Updates
+            </button>
+            ${state.updateAvailable ? `
+              <button id="btn-install-update" class="w-full min-h-[50px] rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-sm shadow-emerald-500/20">
+                ✨ Install Update & Relaunch
+              </button>
+            ` : ''}
+          </div>
+
+          <div id="pwa-terminal" aria-live="polite" class="mt-4 bg-slate-950 text-emerald-400 font-mono text-[10px] sm:text-xs p-4 rounded-xl h-32 overflow-y-auto flex-col gap-1 shadow-inner hidden border border-slate-800">> </div>
         </div>
       </div>
 

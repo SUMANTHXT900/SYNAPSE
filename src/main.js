@@ -7,6 +7,127 @@ import { getTodayWaterScore, logWater } from './services/waterService.js';
 import { renderHome, renderStudy, renderAnalysis, renderSettings, renderGoalCard } from './router.js';
 import { db, checkDbHealth } from './db.js';
 import { getAnalyticsData } from './services/analysisService.js';
+import { registerSW } from 'virtual:pwa-register';
+
+let swRegistration = null;
+let pwaUpdateSW = null;
+
+const updateSW = registerSW({
+  onNeedRefresh() {
+    setState({
+      updateAvailable: true,
+      updateStatusText: 'New version available!'
+    });
+  },
+  onOfflineReady() {
+    console.log('Synapse assets successfully cached for offline use.');
+  }
+});
+pwaUpdateSW = updateSW;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.ready.then(reg => {
+    swRegistration = reg;
+  });
+}
+
+window.__pwaCheckForUpdates = async (isManualClick = false) => {
+  console.log("🚀 [PWA Engine] __pwaCheckForUpdates triggered! Manual:", isManualClick);
+  const pushLog = (msg) => {
+    const currentLogs = getState().updateLogs;
+    setState({ updateLogs: [...currentLogs, msg] });
+  };
+
+  if (isManualClick) {
+    setState({ isCheckingForUpdates: true, updateStatusText: 'Initializing diagnostic...', updateLogs: [] });
+    pushLog('System: Initiating OTA update sequence...');
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  if (!navigator.onLine) {
+    if (isManualClick) {
+      pushLog('Error: No network connection detected.');
+      setState({ updateStatusText: 'You are offline. Connection required.', isCheckingForUpdates: false });
+    }
+    return;
+  }
+
+  const hostname = window.location.hostname;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+  const isLocalIP = hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.') || hostname.endsWith('.local');
+  const isSecure = window.isSecureContext;
+
+  if (isLocalhost || (isLocalIP && !isSecure)) {
+    if (isManualClick) {
+      pushLog('System: Analyzing environment signature...');
+      await new Promise(r => setTimeout(r, 400));
+      if (isLocalIP) {
+        pushLog('Warning: LAN IP connection detected over HTTP.');
+        pushLog('Security: Mobile browsers disable PWAs on unsecure origins.');
+        pushLog('Notice: OTA testing requires an HTTPS server deployment.');
+      } else {
+        pushLog('Warning: Localhost environment detected.');
+        pushLog('System: Bypassing Cloudflare Edge network check.');
+      }
+      setState({
+        isCheckingForUpdates: false,
+        updateStatusText: isLocalIP ? 'OTA disabled over local HTTP connection.' : 'Running locally. OTA updates disabled.'
+      });
+    }
+    return;
+  }
+
+  if (!('serviceWorker' in navigator)) {
+    if (isManualClick) {
+      pushLog('Error: Service Workers are not supported or are blocked.');
+      setState({ isCheckingForUpdates: false, updateStatusText: 'PWA features unsupported.' });
+    }
+    return;
+  }
+
+  try {
+    const activeReg = await navigator.serviceWorker.getRegistration();
+
+    if (activeReg) {
+      if (isManualClick) {
+        pushLog('Network: Contacting Cloudflare Pages Edge Server...');
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      await activeReg.update();
+
+      if (isManualClick) {
+        pushLog('System: Verifying byte hashes and service worker integrity...');
+        setTimeout(() => {
+          const state = getState();
+          if (!state.updateAvailable) {
+            pushLog('Result: Hashes match. System is up to date.');
+            setState({ isCheckingForUpdates: false, updateStatusText: 'Synapse is completely up to date!' });
+          } else {
+            pushLog('Result: New version manifest downloaded successfully.');
+            pushLog('Action: Update payload ready for installation.');
+            setState({ isCheckingForUpdates: false });
+          }
+        }, 800);
+      }
+    } else {
+      if (isManualClick) {
+        pushLog('Status: Service worker container active, but no registration found.');
+        pushLog('Action: Clear browser storage data or wait for app initialization.');
+        setState({ isCheckingForUpdates: false, updateStatusText: 'Registration slot initializing.' });
+      }
+    }
+  } catch (err) {
+    if (isManualClick) {
+      pushLog(`Error: Connection failed -> ${err.message}`);
+      setState({ isCheckingForUpdates: false, updateStatusText: 'Check failed. Try again.' });
+    }
+  }
+};
+
+window.__pwaApplyUpdate = () => {
+  if (pwaUpdateSW) pwaUpdateSW(true);
+};
 
 // Android Chrome touch fix: fire click on touchend for buttons
 let _touchHandled = false;
@@ -27,15 +148,12 @@ let studyTimerInterval = null;
 
 function formatElapsedTime(ms) {
   const totalSeconds = Math.floor(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
+  const hours = Math.min(Math.floor(totalSeconds / 3600), 99);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   const paddedMin = String(minutes).padStart(2, '0');
   const paddedSec = String(seconds).padStart(2, '0');
-  if (hours > 0) {
-    return `${hours}:${paddedMin}:${paddedSec}`;
-  }
-  return `${paddedMin}:${paddedSec}`;
+  return `${String(hours).padStart(2, '0')}:${paddedMin}:${paddedSec}`;
 }
 
 function updateNavActiveState(viewName) {
@@ -141,6 +259,7 @@ function initWaterCardListeners() {
         const type = presetBtn.getAttribute('data-type');
         await logWater(type);
         modal.close();
+        showWaterUndoToast();
         return;
       }
 
@@ -163,10 +282,59 @@ function initWaterCardListeners() {
         if (val && Number(val) > 0) {
           await logWater('Custom Sips', val);
           modal.close();
+          showWaterUndoToast();
         }
       }
     });
   });
+}
+
+function showWaterUndoToast() {
+  let toast = document.getElementById('water-undo-toast');
+  if (toast) {
+    toast.remove();
+    clearTimeout(toast._timer);
+  }
+
+  toast = document.createElement('div');
+  toast.id = 'water-undo-toast';
+  toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-950/95 backdrop-blur-md text-white rounded-2xl px-4 py-3.5 shadow-xl flex items-center gap-3 transition-all duration-300 text-xs font-semibold font-sans opacity-0 translate-y-4';
+  toast.innerHTML = `
+    <span>💧 Water logged!</span>
+    <button id="water-undo-btn" class="bg-red-500 hover:bg-red-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95">Undo</button>
+  `;
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.remove('opacity-0', 'translate-y-4');
+  });
+
+  const handleUndo = async () => {
+    const now = Date.now();
+    const startOfDay = new Date().setHours(0, 0, 0, 0);
+    const logs = await db.water_logs.where('timestamp').between(startOfDay, now, true, true).toArray();
+    const lastLog = logs[logs.length - 1];
+    if (lastLog) {
+      await db.water_logs.delete(lastLog.id);
+      const todayScore = await getTodayWaterScore();
+      setState({ dailyWaterScore: todayScore });
+    }
+    toast.classList.add('opacity-0', 'translate-y-4');
+    setTimeout(() => toast.remove(), 300);
+  };
+
+  toast.addEventListener('click', (e) => {
+    if (e.target.id === 'water-undo-btn') {
+      handleUndo();
+    }
+  });
+
+  toast._timer = setTimeout(() => {
+    toast.classList.add('opacity-0', 'translate-y-4');
+    setTimeout(() => {
+      if (toast && toast.parentNode) toast.remove();
+    }, 300);
+  }, 5000);
 }
 
 function formatDuration(totalMs) {
@@ -234,6 +402,8 @@ function initStudyCardListeners() {
             `).join('')}
           </div>
         </div>
+
+        <p id="end-session-error" role="alert" class="text-red-600 text-sm font-bold mt-2 min-h-[20px]"></p>
       `;
 
       const modal = showModal({
@@ -249,14 +419,16 @@ function initStudyCardListeners() {
             text: 'End Session',
             type: 'primary',
             onClick: async (m) => {
+              const errorEl = bodyContainer.querySelector('#end-session-error');
               if (!selectedGoalStatus) {
-                alert('Please select a goal status.');
+                if (errorEl) errorEl.textContent = 'Please select a goal status.';
                 return;
               }
               if (selectedGoalStatus !== 'abandoned' && !selectedFocusQuality) {
-                alert('Please select a focus quality.');
+                if (errorEl) errorEl.textContent = 'Please select a focus quality.';
                 return;
               }
+              if (errorEl) errorEl.textContent = '';
               await stopStudySession(
                 currentSession.id,
                 selectedGoalStatus,
@@ -340,7 +512,7 @@ function initStudyCardListeners() {
         </div>
       `;
 
-      bodyContainer.innerHTML = optionsHtml;
+      bodyContainer.innerHTML = optionsHtml + '<p id="start-session-error" role="alert" class="text-red-600 text-sm font-bold mt-2 min-h-[20px]"></p>';
 
       showModal({
         title: 'Start Study Session',
@@ -361,9 +533,11 @@ function initStudyCardListeners() {
               const newSubject = subjectInput ? subjectInput.value.trim() : '';
 
               if (!selectedGoalId && !newSubject) {
-                alert('Please select an existing goal or enter a new subject.');
+                const errorEl = bodyContainer.querySelector('#start-session-error');
+                if (errorEl) errorEl.textContent = 'Please select an existing goal or enter a new subject.';
                 return;
               }
+              if (errorEl) errorEl.textContent = '';
 
               await startStudySession(selectedGoalId || null, newSubject || null);
               m.close();
@@ -393,7 +567,7 @@ function applyStudySessionUI(session) {
         <div class="text-sm font-bold text-gray-700 truncate">Focusing on: ${goalName}</div>
         <div class="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3 shadow-sm">
           <span class="text-xs text-red-700 font-semibold uppercase tracking-wider">Elapsed Time</span>
-          <span id="study-timer-display" class="font-mono text-xl font-bold text-red-600 tracking-tight">
+          <span id="study-timer-display" aria-live="polite" aria-atomic="true" class="font-mono text-xl font-bold text-red-600 tracking-tight">
             00:00
           </span>
         </div>
@@ -430,13 +604,57 @@ function applyStudySessionUI(session) {
   }
 }
 
+function updateTodayActivityCard() {
+  const todayEl = document.getElementById('today-study-time');
+  const waterEl = document.getElementById('today-water-score');
+  const goalsEl = document.getElementById('today-goals-count');
+  if (!todayEl) return;
+
+  const state = getState();
+
+  // Calculate today's study time
+  const today = new Date().toLocaleDateString('en-CA');
+  db.study_sessions.where('date').equals(today).toArray().then(sessions => {
+    let totalMs = 0;
+    let count = 0;
+    sessions.forEach(s => {
+      if (s.end_time) {
+        totalMs += s.end_time - s.start_time;
+        count++;
+      }
+    });
+    const mins = Math.round(totalMs / 60000);
+    todayEl.textContent = mins > 0 ? `${mins}m` : '0m';
+  });
+
+  if (waterEl) waterEl.textContent = state.dailyWaterScore.toString();
+
+  if (goalsEl) {
+    db.goals.where('status').anyOf('pending', 'active', 'partial').count().then(c => {
+      goalsEl.textContent = c.toString();
+    });
+  }
+
+  // Wire up the "View Goals" button
+  const btnTodayGoals = document.getElementById('btn-today-goals');
+  if (btnTodayGoals) {
+    btnTodayGoals.removeEventListener('click', updateTodayActivityCard._navHandler);
+    updateTodayActivityCard._navHandler = () => setState({ currentView: 'study' });
+    btnTodayGoals.addEventListener('click', updateTodayActivityCard._navHandler);
+  }
+}
+
 function renderCurrentView() {
   const state = getState();
+
+  const container = document.getElementById('view-container');
+
   const callbacks = {
     onHomeMounted: () => {
       initWaterCardListeners();
       initStudyCardListeners();
       applyStudySessionUI(state.activeStudySession);
+      updateTodayActivityCard();
     },
     onAnalysisMounted: async () => {
       const range = getState().analysisDateRange || '7days';
@@ -483,7 +701,7 @@ function renderCurrentView() {
 
       if (activeList) {
         if (activeGoals.length === 0) {
-          activeList.innerHTML = '<div class="text-center py-12 text-gray-400 font-medium">No active goals. Start a session from Home!</div>';
+          activeList.innerHTML = '<div class="flex flex-col items-center justify-center py-16 text-center px-6"><span class="text-4xl mb-3">📋</span><p class="text-gray-400 font-semibold text-sm">No active goals yet</p><p class="text-gray-300 text-xs mt-1 max-w-xs">Head to the Home tab and tap <strong>Start Session</strong> to create your first goal!</p></div>';
         } else {
           activeList.innerHTML = activeGoals.map(g => renderGoalCard(g)).join('');
         }
@@ -491,7 +709,7 @@ function renderCurrentView() {
 
       if (archiveList) {
         if (archivedGoals.length === 0) {
-          archiveList.innerHTML = '<div class="text-center py-8 text-gray-400 font-medium">No archived goals</div>';
+          archiveList.innerHTML = '<div class="flex flex-col items-center justify-center py-12 text-center px-6"><span class="text-3xl mb-2">🏁</span><p class="text-gray-400 font-semibold text-sm">No archived goals</p><p class="text-gray-300 text-xs mt-0.5">Complete or abandon a goal and it will appear here.</p></div>';
         } else {
           archiveList.innerHTML = archivedGoals.map(g => renderGoalCard(g)).join('');
         }
@@ -548,13 +766,14 @@ function renderCurrentView() {
             } else {
               bodyContainer.innerHTML = completedSessions.map(s => {
                 const date = new Date(s.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const time = new Date(s.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', hour12: true });
                 const duration = formatDuration(s.end_time - s.start_time);
                 const qualityLabels = { deep: '🧘 Deep Focus', okay: '😐 Okay', distracted: '😵 Distracted' };
                 const quality = s.focus_quality ? (qualityLabels[s.focus_quality] || s.focus_quality) : '—';
                 return `
                   <div class="bg-gray-50 rounded-2xl p-4 border border-gray-100">
                     <div class="flex items-center justify-between mb-1">
-                      <span class="text-sm font-bold text-gray-900">${date}</span>
+                      <span class="text-sm font-bold text-gray-900">${date} · ${time}</span>
                       <span class="text-sm font-bold text-purple-600">${duration}</span>
                     </div>
                     <div class="flex items-center gap-2">
@@ -685,6 +904,24 @@ function renderCurrentView() {
           });
         });
       }
+
+      const btnCheckUpdates = document.getElementById('btn-check-updates');
+      if (btnCheckUpdates) {
+        btnCheckUpdates.addEventListener('click', (e) => {
+          e.preventDefault();
+          console.log("👆 [UI] Check Updates button clicked directly!");
+          window.__pwaCheckForUpdates(true);
+        });
+      }
+
+      const btnInstallUpdate = document.getElementById('btn-install-update');
+      if (btnInstallUpdate) {
+        btnInstallUpdate.addEventListener('click', (e) => {
+          e.preventDefault();
+          console.log("👆 [UI] Install Update button clicked!");
+          window.__pwaApplyUpdate();
+        });
+      }
     }
   };
 
@@ -704,6 +941,12 @@ function renderCurrentView() {
     default:
       renderHome(viewContainer, callbacks);
   }
+
+  requestAnimationFrame(() => {
+    viewContainer.classList.remove('view-enter');
+    void viewContainer.offsetWidth;
+    viewContainer.classList.add('view-enter');
+  });
 }
 
 navButtons.forEach(btn => {
@@ -713,33 +956,33 @@ navButtons.forEach(btn => {
   });
 });
 
-subscribe((state, changedKey) => {
-  if (!changedKey || changedKey === 'currentView') {
+subscribe((state, changedKeys) => {
+  const hasChanged = (k) => !changedKeys || changedKeys.includes(k);
+
+  if (hasChanged('currentView')) {
     updateNavActiveState(state.currentView);
     renderCurrentView();
     return;
   }
 
-  if (changedKey === 'analysisDateRange' && state.currentView === 'analysis') {
+  if (hasChanged('analysisDateRange') && state.currentView === 'analysis') {
     renderCurrentView();
     return;
   }
 
-  if (changedKey === 'activeStudySession') {
+  if (hasChanged('activeStudySession')) {
     clearStudyTimer();
     if (state.currentView === 'home' || state.currentView === 'analysis') {
       applyStudySessionUI(state.activeStudySession);
     }
   }
 
-  if (!changedKey || changedKey === 'dailyWaterScore') {
-    const hydrationEl = document.getElementById('hydration-placeholder');
-    if (hydrationEl) {
-      hydrationEl.textContent = state.dailyWaterScore.toString();
-    }
+  if (hasChanged('dailyWaterScore')) {
+    const el = document.getElementById('hydration-placeholder');
+    if (el) el.textContent = `You've earned ${state.dailyWaterScore} hydration points today.`;
   }
 
-  if (!changedKey || changedKey === 'currentDate') {
+  if (hasChanged('currentDate')) {
     const headerDateEl = document.getElementById('header-date');
     if (headerDateEl) {
       const [year, month, day] = state.currentDate.split('-');
@@ -752,14 +995,71 @@ subscribe((state, changedKey) => {
       });
     }
   }
+
+  if (hasChanged('updateAvailable')) {
+    renderUpdateToast(state.updateAvailable);
+  }
+
+  if (hasChanged('updateStatusText') || hasChanged('isCheckingForUpdates')) {
+    const statusEl = document.getElementById('pwa-status-text');
+    if (statusEl) statusEl.textContent = state.updateStatusText;
+    const checkBtn = document.getElementById('btn-check-updates');
+    if (checkBtn) checkBtn.disabled = state.isCheckingForUpdates;
+  }
+
+  if (hasChanged('updateLogs')) {
+    const terminal = document.getElementById('pwa-terminal');
+    if (terminal) {
+      if (state.updateLogs.length > 0) {
+        terminal.classList.remove('hidden');
+        terminal.classList.add('flex');
+      }
+      terminal.innerHTML = state.updateLogs.map(log =>
+        `<div><span class="text-slate-600">[${new Date().toLocaleTimeString('en-US', {hour12: false})}]</span> ${log}</div>`
+      ).join('');
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+  }
 });
+
+function renderUpdateToast(show) {
+  let toast = document.getElementById('pwa-update-toast');
+  if (show) {
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'pwa-update-toast';
+      toast.setAttribute('role', 'alert');
+      toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-950/95 backdrop-blur-md text-white rounded-2xl px-4 py-3.5 shadow-xl flex items-center gap-3 transition-all duration-300 text-xs font-semibold font-sans opacity-0 translate-y-4';
+      toast.innerHTML = `
+        <span>✨ Update live!</span>
+        <button id="toast-update-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95">Relaunch</button>
+      `;
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.classList.remove('opacity-0', 'translate-y-4');
+      });
+      toast.addEventListener('click', (e) => {
+        if (e.target.id === 'toast-update-btn') {
+          window.__pwaApplyUpdate();
+        }
+      });
+    }
+  } else {
+    if (toast) {
+      toast.classList.add('opacity-0', 'translate-y-4');
+      setTimeout(() => toast.remove(), 300);
+    }
+  }
+}
 
 function updateDbStatusBadges(status) {
   const ids = [
     ['db-dot-mobile', 'db-label-mobile', 'db-status-mobile'],
     ['db-dot-desktop', 'db-label-desktop', 'db-status-desktop'],
     ['db-dot-mobile-analysis', 'db-label-mobile-analysis', 'db-status-mobile-analysis'],
-    ['db-dot-desktop-analysis', 'db-label-desktop-analysis', 'db-status-desktop-analysis']
+    ['db-dot-desktop-analysis', 'db-label-desktop-analysis', 'db-status-desktop-analysis'],
+    ['db-dot-mobile-settings', 'db-label-mobile-settings', 'db-status-mobile-settings'],
+    ['db-dot-mobile-study', 'db-label-mobile-study', 'db-status-mobile-study']
   ];
   const isOk = status.ok;
   const bgClass = isOk ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700';
@@ -908,7 +1208,7 @@ function renderFocusDonut(data) {
       </div>
       <div class="flex flex-col sm:flex-row items-center gap-6">
         <div class="relative w-[120px] h-[120px] shrink-0">
-          <svg viewBox="0 0 80 80" class="w-full h-full -rotate-90">
+          <svg viewBox="0 0 80 80" class="w-full h-full">
             ${segHtml}
           </svg>
           <div class="absolute inset-0 flex items-center justify-center">
@@ -1177,6 +1477,11 @@ async function initializeApp() {
 
   const todayWaterScore = await getTodayWaterScore();
   setState({ dailyWaterScore: todayWaterScore });
+
+  // Silent PWA update check 3 seconds after paint
+  setTimeout(() => {
+    window.__pwaCheckForUpdates(false);
+  }, 3000);
 }
 
 initializeApp();

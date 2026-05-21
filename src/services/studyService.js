@@ -142,14 +142,9 @@ export async function updateGoal(goalId, newSubject) {
 }
 
 export async function deleteGoal(goalId) {
-  const sessions = await db.study_sessions
-    .where('goal_id')
-    .equals(goalId)
-    .toArray();
-
-  for (const session of sessions) {
-    await db.study_sessions.delete(session.id);
-  }
-
-  await db.goals.delete(goalId);
+  return db.transaction('rw', db.goals, db.study_sessions, db.active_sessions, async () => {
+    await db.study_sessions.where('goal_id').equals(goalId).delete();
+    await db.active_sessions.where('goal_id').equals(goalId).delete();
+    await db.goals.delete(goalId);
+  });
 }
