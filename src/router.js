@@ -1,5 +1,10 @@
 import { getState } from './state.js';
 
+function escapeHTML(str) {
+  if (typeof str !== 'string') return str ?? '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function formatLongDate(dateStr) {
   if (!dateStr) return 'Unknown Date';
   const [year, month, day] = dateStr.split('-');
@@ -26,10 +31,14 @@ function formatElapsedTime(ms) {
 }
 
 function formatDuration(totalMs) {
+  if (totalMs == null || isNaN(totalMs)) return '0s';
   const totalSeconds = Math.floor(totalMs / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
   if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0 && secs > 0) return `${minutes}m ${secs}s`;
   return `${minutes}m`;
 }
 
@@ -55,7 +64,7 @@ export function renderGoalCard(goal) {
     <div data-goal-id="${goal.id}" class="goal-card bg-white rounded-3xl p-5 shadow-sm border border-gray-100 transition-all hover:shadow-md">
       <div class="flex items-start justify-between gap-3 mb-3">
         <div class="flex-1 min-w-0">
-          <h4 class="text-base font-bold text-gray-900 truncate">${goal.subject}</h4>
+          <h4 class="text-base font-bold text-gray-900 truncate">${escapeHTML(goal.subject)}</h4>
           <div class="flex items-center gap-2 mt-1">
             <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${displayStatusClass}">${displayStatus}</span>
             <span class="text-xs text-gray-400 font-medium">${sessionCount} sessions · ${timeStr}</span>
@@ -82,7 +91,7 @@ export function renderGoalCard(goal) {
 
 export function renderHome(container, callbacks) {
   const state = getState();
-  const greeting = state.userName ? `Hey ${state.userName}, let's get to work` : 'Hey there, let\'s get to work';
+  const greeting = state.userName ? `Hey ${escapeHTML(state.userName)}, let's get to work` : 'Hey there, let\'s get to work';
 
   container.innerHTML = `
     <header class="md:hidden w-full bg-[#F2F2F7]/90 backdrop-blur-md sticky top-0 z-40 px-4 py-4 flex items-center justify-between border-b border-gray-200/50">
@@ -234,14 +243,14 @@ export function renderAnalysis(container, callbacks) {
       <div id="analysis-content">
 
         <!-- Empty State (shown when no data, hidden by default) -->
-        <div id="analysis-empty-state" class="hidden flex flex-col items-center justify-center min-h-[400px] text-center px-6">
+        <div id="analysis-empty-state" class="hidden flex-col items-center justify-center min-h-[400px] text-center px-6">
           <div class="text-6xl mb-6 animate-gentle-pulse">📊</div>
           <h3 class="text-2xl font-outfit font-bold text-gray-800 mb-2">No data yet</h3>
           <p class="text-gray-400 font-medium max-w-sm">Start a study session or log some water to unlock rich analytics and insights about your performance.</p>
         </div>
 
         <!-- Full Dashboard (hidden by default) -->
-        <div id="analysis-dashboard" class="hidden flex flex-col gap-6">
+        <div id="analysis-dashboard" class="hidden flex-col gap-6">
 
           <!-- Hero Stats Row -->
           <div id="analysis-hero" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -339,7 +348,7 @@ export function renderStudy(container, callbacks) {
 
 export function renderSettings(container, callbacks) {
   const state = getState();
-  const displayName = state.userName || 'Guest';
+  const displayName = escapeHTML(state.userName) || 'Guest';
 
   container.innerHTML = `
     <header class="md:hidden w-full bg-[#F2F2F7]/90 backdrop-blur-md sticky top-0 z-40 px-4 py-4 flex items-center justify-between border-b border-gray-200/50">
@@ -395,7 +404,7 @@ export function renderSettings(container, callbacks) {
             </div>
             ${state.versionNote ? `
             <div class="pt-2 mt-1 border-t border-dashed border-gray-200">
-              <p class="text-[10px] text-gray-400 leading-relaxed">${state.versionNote}</p>
+              <p class="text-[10px] text-gray-400 leading-relaxed">${escapeHTML(state.versionNote)}</p>
             </div>
             ` : ''}
           </div>

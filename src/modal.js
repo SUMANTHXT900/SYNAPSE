@@ -44,6 +44,9 @@ class SynapseModal {
     // 2. Create the Modal Glass Panel
     this.modalEl = document.createElement('div');
     this.modalEl.className = 'relative w-full max-w-md bg-white border border-gray-100 rounded-3xl shadow-xl shadow-gray-200/50 p-6 overflow-hidden transform scale-95 opacity-0 transition-all duration-300 flex flex-col gap-4';
+    this.modalEl.setAttribute('role', 'dialog');
+    this.modalEl.setAttribute('aria-modal', 'true');
+    this.modalEl.setAttribute('aria-label', this.title);
     
     // Trigger entrance animation for modal card
     requestAnimationFrame(() => {
@@ -123,6 +126,12 @@ class SynapseModal {
     this.backdropEl.appendChild(this.modalEl);
     document.body.appendChild(this.backdropEl);
 
+    // Focus first focusable element
+    requestAnimationFrame(() => {
+      const firstFocusable = this.modalEl.querySelector('button, [href], input, select, textarea');
+      if (firstFocusable) firstFocusable.focus();
+    });
+
     // 6. Focus Trap & Key Listeners
     window.addEventListener('keydown', this._boundKeydown);
 
@@ -172,6 +181,32 @@ class SynapseModal {
   handleKeyDown(e) {
     if (e.key === 'Escape') {
       this.close();
+      return;
+    }
+    if (e.key === 'Tab') {
+      this._trapFocus(e);
+    }
+  }
+
+  _trapFocus(e) {
+    const focusable = this.modalEl.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
   }
 }

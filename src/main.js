@@ -2,18 +2,25 @@ import './style.css';
 
 import { getState, setState, subscribe } from './state.js';
 import { showModal } from './modal.js';
-import { getPendingGoals, startStudySession, stopStudySession, getActiveStudySession, getAllGoalsWithHistory, updateGoal, deleteGoal } from './services/studyService.js';
+import { getPendingGoals, startStudySession, stopStudySession, getActiveStudySession, getAllGoalsWithHistory, updateGoal, deleteGoal, mergeDuplicateGoals } from './services/studyService.js';
 import { getTodayWaterScore, logWater } from './services/waterService.js';
 import { renderHome, renderStudy, renderAnalysis, renderSettings, renderGoalCard } from './router.js';
 import { db, checkDbHealth } from './db.js';
 import { getAnalyticsData } from './services/analysisService.js';
 import { registerSW } from 'virtual:pwa-register';
 
+function escapeHTML(str) {
+  if (typeof str !== 'string') return str ?? '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 let swRegistration = null;
 let pwaUpdateSW = null;
+let _updateCheckResolved = false;
 
 const updateSW = registerSW({
   onNeedRefresh() {
+    _updateCheckResolved = true;
     setState({
       updateAvailable: true,
       updateStatusText: 'New version available!'
@@ -98,17 +105,21 @@ window.__pwaCheckForUpdates = async (isManualClick = false) => {
 
       if (isManualClick) {
         pushLog('System: Verifying byte hashes and service worker integrity...');
+        _updateCheckResolved = false;
         setTimeout(() => {
-          const state = getState();
-          if (!state.updateAvailable) {
-            pushLog('Result: Hashes match. System is up to date.');
-            setState({ isCheckingForUpdates: false, updateStatusText: 'Synapse is completely up to date!' });
-          } else {
-            pushLog('Result: New version manifest downloaded successfully.');
-            pushLog('Action: Update payload ready for installation.');
-            setState({ isCheckingForUpdates: false });
+          if (!_updateCheckResolved) {
+            const state = getState();
+            if (!state.updateAvailable) {
+              pushLog('Result: Hashes match. System is up to date.');
+              setState({ isCheckingForUpdates: false, updateStatusText: 'Synapse is completely up to date!' });
+            } else {
+              pushLog('Result: New version manifest downloaded successfully.');
+              pushLog('Action: Update payload ready for installation.');
+              setState({ isCheckingForUpdates: false });
+            }
+            _updateCheckResolved = true;
           }
-        }, 800);
+        }, 5000);
       }
     } else {
       if (isManualClick) {
@@ -176,6 +187,7 @@ function clearStudyTimer() {
 }
 
 function bindStudyTimerToNewDOM() {
+  clearStudyTimer();
   const state = getState();
   if (!state.activeStudySession) return;
 
@@ -239,7 +251,7 @@ function initWaterCardListeners() {
         Enter Custom Sips
       </button>
       
-      <div id="custom-sips-container" class="hidden flex gap-3">
+      <div id="custom-sips-container" class="hidden gap-3">
         <input type="number" id="custom-sips-input" min="1" placeholder="Score (e.g. 8)" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-blue-500 outline-none shadow-inner" />
         <button id="btn-log-custom" class="bg-blue-600 hover:bg-blue-700 text-white rounded-2xl px-8 font-bold shadow-md transition-all active:scale-95">Log</button>
       </div>
@@ -257,9 +269,10 @@ function initWaterCardListeners() {
       const presetBtn = e.target.closest('.preset-btn');
       if (presetBtn) {
         const type = presetBtn.getAttribute('data-type');
+        const prevScore = getState().dailyWaterScore;
         await logWater(type);
         modal.close();
-        showWaterUndoToast();
+        showWaterUndoToast(getState().dailyWaterScore - prevScore);
         return;
       }
 
@@ -269,7 +282,10 @@ function initWaterCardListeners() {
         const presets = document.getElementById('water-presets');
         if (presets) presets.classList.add('opacity-40', 'pointer-events-none');
         const container = document.getElementById('custom-sips-container');
-        if (container) container.classList.remove('hidden');
+        if (container) {
+          container.classList.remove('hidden');
+          container.classList.add('flex');
+        }
         const input = document.getElementById('custom-sips-input');
         if (input) input.focus();
         return;
@@ -280,16 +296,17 @@ function initWaterCardListeners() {
         const input = document.getElementById('custom-sips-input');
         const val = input ? input.value : '';
         if (val && Number(val) > 0) {
+          const prevScore = getState().dailyWaterScore;
           await logWater('Custom Sips', val);
           modal.close();
-          showWaterUndoToast();
+          showWaterUndoToast(getState().dailyWaterScore - prevScore);
         }
       }
     });
   });
 }
 
-function showWaterUndoToast() {
+function showWaterUndoToast(score) {
   let toast = document.getElementById('water-undo-toast');
   if (toast) {
     toast.remove();
@@ -300,7 +317,7 @@ function showWaterUndoToast() {
   toast.id = 'water-undo-toast';
   toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-950/95 backdrop-blur-md text-white rounded-2xl px-4 py-3.5 shadow-xl flex items-center gap-3 transition-all duration-300 text-xs font-semibold font-sans opacity-0 translate-y-4';
   toast.innerHTML = `
-    <span>💧 Water logged!</span>
+    <span>💧 +${score} hydration points logged.</span>
     <button id="water-undo-btn" class="bg-red-500 hover:bg-red-600 text-white font-bold px-3 py-1.5 rounded-xl transition-all active:scale-95">Undo</button>
   `;
   document.body.appendChild(toast);
@@ -335,6 +352,31 @@ function showWaterUndoToast() {
       if (toast && toast.parentNode) toast.remove();
     }, 300);
   }, 5000);
+}
+
+function showToast(message, duration = 5000) {
+  let toast = document.getElementById('app-toast');
+  if (toast) {
+    toast.remove();
+    clearTimeout(toast._timer);
+  }
+
+  toast = document.createElement('div');
+  toast.id = 'app-toast';
+  toast.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-950/95 backdrop-blur-md text-white rounded-2xl px-4 py-3.5 shadow-xl flex items-center gap-3 transition-all duration-300 text-xs font-semibold font-sans opacity-0 translate-y-4';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.remove('opacity-0', 'translate-y-4');
+  });
+
+  toast._timer = setTimeout(() => {
+    toast.classList.add('opacity-0', 'translate-y-4');
+    setTimeout(() => {
+      if (toast && toast.parentNode) toast.remove();
+    }, 300);
+  }, duration);
 }
 
 function formatDuration(totalMs) {
@@ -508,7 +550,7 @@ function initStudyCardListeners() {
       optionsHtml += `
         <div class="flex flex-col gap-2">
           <label class="font-bold text-purple-600 text-[10px] tracking-widest uppercase">Create New Goal</label>
-          <input type="text" id="new-goal-subject" placeholder="What are you studying? (e.g. Linear Algebra)" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-semibold focus:ring-2 focus:ring-purple-500 outline-none transition-colors shadow-sm" />
+          <input type="text" id="new-goal-subject" placeholder="What are you studying? (e.g. Linear Algebra)" maxlength="100" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-semibold focus:ring-2 focus:ring-purple-500 outline-none transition-colors shadow-sm" />
         </div>
       `;
 
@@ -532,14 +574,17 @@ function initStudyCardListeners() {
               const selectedGoalId = selectEl ? selectEl.value : null;
               const newSubject = subjectInput ? subjectInput.value.trim() : '';
 
+              const errorEl = bodyContainer.querySelector('#start-session-error');
               if (!selectedGoalId && !newSubject) {
-                const errorEl = bodyContainer.querySelector('#start-session-error');
                 if (errorEl) errorEl.textContent = 'Please select an existing goal or enter a new subject.';
                 return;
               }
               if (errorEl) errorEl.textContent = '';
 
-              await startStudySession(selectedGoalId || null, newSubject || null);
+              const result = await startStudySession(selectedGoalId || null, newSubject || null);
+              if (result && result.reusedGoal) {
+                showToast(`Continuing existing goal "${result.goalSubject}"`);
+              }
               m.close();
             }
           }
@@ -564,7 +609,7 @@ function applyStudySessionUI(session) {
           <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shadow-sm"></span>
           <span class="text-[10px] sm:text-xs text-red-600 font-bold uppercase tracking-widest">Active Study</span>
         </div>
-        <div class="text-sm font-bold text-gray-700 truncate">Focusing on: ${goalName}</div>
+        <div class="text-sm font-bold text-gray-700 truncate">Focusing on: ${escapeHTML(goalName)}</div>
         <div class="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3 shadow-sm">
           <span class="text-xs text-red-700 font-semibold uppercase tracking-wider">Elapsed Time</span>
           <span id="study-timer-display" aria-live="polite" aria-atomic="true" class="font-mono text-xl font-bold text-red-600 tracking-tight">
@@ -692,7 +737,13 @@ function renderCurrentView() {
       }
     },
     onStudyMounted: async () => {
-      const goals = await getAllGoalsWithHistory();
+      let goals = [];
+      try {
+        goals = await getAllGoalsWithHistory();
+      } catch (err) {
+        console.error('[Study] Failed to load goals:', err);
+      }
+
       const activeList = document.getElementById('goals-active-list');
       const archiveList = document.getElementById('goals-archive-list');
 
@@ -715,22 +766,27 @@ function renderCurrentView() {
         }
       }
 
-      const goalsContainer = document.getElementById('goals-active-list') || document.getElementById('goals-archive-list');
-      if (goalsContainer) {
-        goalsContainer.closest('.max-w-5xl').addEventListener('click', async (e) => {
+      // Attach a SINGLE persistent listener to the view container (never destroyed).
+      // Queries DB directly per click instead of relying on a closure variable.
+      const viewContainer = document.getElementById('view-container');
+      if (viewContainer && !viewContainer._studyGoalHandler) {
+        viewContainer._studyGoalHandler = async (e) => {
+          if (getState().currentView !== 'study') return;
+
           const actionBtn = e.target.closest('[data-action]');
           if (!actionBtn) return;
+          if (!actionBtn.closest('#goals-active-list, #goals-archive-list')) return;
 
           const action = actionBtn.getAttribute('data-action');
           const goalId = actionBtn.getAttribute('data-goal-id');
 
           if (action === 'edit') {
-            const goal = goals.find(g => g.id === goalId);
+            const goal = await db.goals.get(goalId);
             if (!goal) return;
             const bodyContainer = document.createElement('div');
             bodyContainer.className = 'flex flex-col gap-4 text-gray-700 mt-2';
             bodyContainer.innerHTML = `
-              <input type="text" id="edit-goal-subject" value="${goal.subject}" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-purple-500 outline-none shadow-sm" />
+               <input type="text" id="edit-goal-subject" value="${escapeHTML(goal.subject)}" maxlength="100" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-purple-500 outline-none shadow-sm" />
             `;
             showModal({
               title: 'Edit Goal',
@@ -755,9 +811,10 @@ function renderCurrentView() {
           }
 
           if (action === 'history') {
-            const goal = goals.find(g => g.id === goalId);
-            if (!goal || !goal.sessions) return;
-            const completedSessions = goal.sessions.filter(s => s.end_time != null);
+            const goal = await db.goals.get(goalId);
+            if (!goal) return;
+            const sessions = await db.study_sessions.where('goal_id').equals(goalId).toArray();
+            const completedSessions = sessions.filter(s => s.end_time != null);
             const bodyContainer = document.createElement('div');
             bodyContainer.className = 'flex flex-col gap-3 text-gray-700 mt-2 max-h-[50vh] overflow-y-auto';
 
@@ -785,18 +842,19 @@ function renderCurrentView() {
               }).join('');
             }
 
-            showModal({ title: `History: ${goal.subject}`, body: bodyContainer, buttons: [] });
+            showModal({ title: `History: ${escapeHTML(goal.subject)}`, body: bodyContainer, buttons: [] });
           }
 
           if (action === 'delete') {
-            const goal = goals.find(g => g.id === goalId);
+            const goal = await db.goals.get(goalId);
             if (!goal) return;
+            const sessionCount = await db.study_sessions.where('goal_id').equals(goalId).count();
             const bodyContainer = document.createElement('div');
             bodyContainer.className = 'flex flex-col gap-4 text-gray-700 mt-2';
             bodyContainer.innerHTML = `
               <div class="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-2xl">
                 <span class="text-2xl">⚠️</span>
-                <p class="text-sm font-medium text-red-800">Delete "<strong>${goal.subject}</strong>" and all its ${goal.sessions ? goal.sessions.length : 0} sessions? This cannot be undone.</p>
+                <p class="text-sm font-medium text-red-800">Delete "<strong>${escapeHTML(goal.subject)}</strong>" and all its ${sessionCount} sessions? This cannot be undone.</p>
               </div>
             `;
             showModal({
@@ -808,15 +866,22 @@ function renderCurrentView() {
                   text: 'Delete',
                   type: 'danger',
                   onClick: async (m) => {
-                    await deleteGoal(goalId);
-                    renderCurrentView();
-                    m.close();
+                    console.log('[Goal Delete] clicked, goalId:', goalId);
+                    try {
+                      await deleteGoal(goalId);
+                      renderCurrentView();
+                      if (m && typeof m.close === 'function') m.close();
+                    } catch (err) {
+                      console.error('[Study] Delete failed:', err);
+                      showToast(`❌ Delete failed: ${err.message}`, 6000);
+                    }
                   }
                 }
               ]
             });
           }
-        });
+        };
+        viewContainer.addEventListener('click', viewContainer._studyGoalHandler);
       }
     },
     onSettingsMounted: () => {
@@ -826,7 +891,7 @@ function renderCurrentView() {
           const bodyContainer = document.createElement('div');
           bodyContainer.className = 'flex flex-col gap-4 text-gray-700 mt-2';
           bodyContainer.innerHTML = `
-            <input type="text" id="new-name-input" placeholder="Enter your name" value="${state.userName || ''}" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
+            <input type="text" id="new-name-input" placeholder="Enter your name" value="${escapeHTML(state.userName || '')}" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
           `;
 
           showModal({
@@ -966,20 +1031,20 @@ subscribe((state, changedKeys) => {
   }
 
   if (hasChanged('analysisDateRange') && state.currentView === 'analysis') {
-    renderCurrentView();
+    refreshAnalysisData(state.analysisDateRange);
     return;
   }
 
   if (hasChanged('activeStudySession')) {
     clearStudyTimer();
-    if (state.currentView === 'home' || state.currentView === 'analysis') {
-      applyStudySessionUI(state.activeStudySession);
-    }
+    applyStudySessionUI(state.activeStudySession);
   }
 
   if (hasChanged('dailyWaterScore')) {
     const el = document.getElementById('hydration-placeholder');
-    if (el) el.textContent = `You've earned ${state.dailyWaterScore} hydration points today.`;
+    if (el) el.textContent = state.dailyWaterScore;
+    const scoreEl = document.getElementById('today-water-score');
+    if (scoreEl) scoreEl.textContent = state.dailyWaterScore;
   }
 
   if (hasChanged('currentDate')) {
@@ -1072,10 +1137,15 @@ function updateDbStatusBadges(status) {
     if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${dotClass}`;
     if (label) label.textContent = status.message;
     if (container) {
-      const cls = container.className;
-      container.className = cls.replace(/bg-\w+-\d+ text-\w+-\d+/g, bgClass);
+      container.classList.remove('bg-emerald-100', 'text-emerald-700', 'bg-red-100', 'text-red-700', 'bg-amber-100', 'text-amber-700');
+      container.classList.add(...bgClass.split(' '));
     }
   });
+}
+
+function formatBarLabel(label, dateRange) {
+  if (dateRange === '7days') return label;
+  return label;
 }
 
 // ===== Analysis View Rendering Helpers =====
@@ -1150,6 +1220,7 @@ function renderStudyTrendChart(data) {
   const section = document.getElementById('analysis-trend-section');
   if (!section) return;
   const trend = data.study.weeklyTrend;
+  const isLongRange = getState().analysisDateRange && getState().analysisDateRange !== '7days';
   section.innerHTML = `
     <div class="animate-in">
       <div class="flex items-center justify-between mb-5">
@@ -1160,7 +1231,7 @@ function renderStudyTrendChart(data) {
             <p class="text-xs text-gray-400 font-medium">Study time per day</p>
           </div>
         </div>
-        <span class="text-sm font-bold text-gray-700">${data.study.summary.weekLabel}</span>
+        <span class="text-sm font-bold text-gray-700">${data.study.summary.periodLabel}</span>
       </div>
       <div class="bar-chart mt-6">
         ${trend.map(b => `
@@ -1168,7 +1239,7 @@ function renderStudyTrendChart(data) {
             <div class="trend-bar bar" style="height: ${Math.max(b.pct, 4)}%; background: linear-gradient(to top, #AF52DE, #FF2D55); border-radius: 6px 6px 3px 3px; width: 100%;">
               <div class="bar-tooltip">${b.minutes}m</div>
             </div>
-            <span class="text-[10px] font-bold text-gray-400 uppercase">${b.label}</span>
+            <span class="${isLongRange ? 'text-[8px]' : 'text-[10px]'} font-bold text-gray-400 uppercase">${formatBarLabel(b.label, getState().analysisDateRange)}</span>
             <span class="text-[9px] text-gray-300 font-semibold">${b.minutes}m</span>
           </div>
         `).join('')}
@@ -1182,6 +1253,10 @@ function renderFocusDonut(data) {
   if (!section) return;
   const fd = data.study.focusDistribution;
   const total = fd.total;
+  if (total === 0) {
+    section.innerHTML = `<div class="flex items-center justify-center h-full text-gray-400 text-sm font-medium py-8">No focus quality data yet. End a session and rate your focus.</div>`;
+    return;
+  }
   const segments = [
     { key: 'deep', label: 'Deep Focus', color: '#5856D6', bg: '#EEEAFF', ...fd.deep },
     { key: 'okay', label: 'Okay', color: '#007AFF', bg: '#E8F2FF', ...fd.okay },
@@ -1286,7 +1361,7 @@ function renderGoalPerformance(data) {
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2 min-w-0">
                   <span class="w-2 h-2 rounded-full shrink-0 ${statusColors[g.status] || 'bg-gray-300'}"></span>
-                  <span class="text-sm font-semibold text-gray-700 truncate">${g.subject}</span>
+                   <span class="text-sm font-semibold text-gray-700 truncate">${escapeHTML(g.subject)}</span>
                 </div>
                 <span class="text-xs font-bold text-gray-500 shrink-0 ml-2">${g.totalTime}</span>
               </div>
@@ -1326,6 +1401,7 @@ function renderHydrationSection(data) {
   const trend = data.hydration.weeklyTrend;
   const types = data.hydration.typeBreakdown;
   const summary = data.hydration.summary;
+  const isLongRange = getState().analysisDateRange && getState().analysisDateRange !== '7days';
 
   // Trend chart
   const trendSection = document.getElementById('analysis-hydration-section');
@@ -1348,7 +1424,7 @@ function renderHydrationSection(data) {
               <div class="trend-bar bar" style="height: ${Math.max(b.pct, 4)}%; background: linear-gradient(to top, #5AC8FA, #007AFF); border-radius: 6px 6px 3px 3px; width: 100%;">
                 <div class="bar-tooltip">${b.score} pts</div>
               </div>
-              <span class="text-[10px] font-bold text-gray-400 uppercase">${b.label}</span>
+              <span class="${isLongRange ? 'text-[8px]' : 'text-[10px]'} font-bold text-gray-400 uppercase">${formatBarLabel(b.label, getState().analysisDateRange)}</span>
               <span class="text-[9px] text-gray-300 font-semibold">${b.score}</span>
             </div>
           `).join('')}
@@ -1429,59 +1505,106 @@ function renderHydrationSection(data) {
   }
 }
 
+async function refreshAnalysisData(dateRange) {
+  const dashboard = document.getElementById('analysis-dashboard');
+  if (!dashboard) return;
+
+  dashboard.classList.add('opacity-40');
+
+  try {
+    const data = await getAnalyticsData(dateRange);
+
+    const emptyState = document.getElementById('analysis-empty-state');
+
+    if (!data.hasData) {
+      dashboard.classList.add('hidden');
+      if (emptyState) {
+        emptyState.classList.remove('hidden');
+        emptyState.classList.add('flex');
+      }
+      return;
+    }
+
+    if (emptyState) {
+      emptyState.classList.add('hidden');
+      emptyState.classList.remove('flex');
+    }
+    dashboard.classList.remove('hidden');
+
+    renderAnalysisHero(data);
+    renderStudyTrendChart(data);
+    renderFocusDonut(data);
+    renderGoalPerformance(data);
+    renderInsights(data);
+    renderHydrationSection(data);
+  } finally {
+    dashboard.classList.remove('opacity-40');
+  }
+}
+
 async function initializeApp() {
-  const health = await checkDbHealth();
-  updateDbStatusBadges(health);
+  try {
+    const health = await checkDbHealth();
+    updateDbStatusBadges(health);
 
-  const userProfile = await db.user_profile.get('default');
-  if (userProfile && userProfile.name) {
-    setState({ userName: userProfile.name });
-  } else {
-    const bodyContainer = document.createElement('div');
-    bodyContainer.className = 'flex flex-col gap-4 text-gray-700 mt-2';
-    bodyContainer.innerHTML = `
-      <p class="text-sm text-gray-500 font-medium">Let's personalize your experience. What should we call you?</p>
-      <input type="text" id="new-name-input" placeholder="Your name (e.g. Alex)" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
-    `;
+    const userProfile = await db.user_profile.get('default');
+    if (userProfile && userProfile.name) {
+      setState({ userName: userProfile.name });
+    } else {
+      const bodyContainer = document.createElement('div');
+      bodyContainer.className = 'flex flex-col gap-4 text-gray-700 mt-2';
+      bodyContainer.innerHTML = `
+        <p class="text-sm text-gray-500 font-medium">Let's personalize your experience. What should we call you?</p>
+        <input type="text" id="new-name-input" placeholder="Your name (e.g. Alex)" class="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-gray-900 font-bold text-lg focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
+      `;
 
-    showModal({
-      title: 'Welcome to Synapse',
-      body: bodyContainer,
-      buttons: [
-        {
-          text: 'Skip for now',
-          type: 'secondary',
-          onClick: (modal) => modal.close()
-        },
-        {
-          text: 'Let\'s go',
-          type: 'primary',
-          onClick: async (modal) => {
-            const input = document.getElementById('new-name-input');
-            const name = input ? input.value.trim() : '';
-            if (name) {
-              await db.user_profile.put({ id: 'default', name, createdAt: Date.now() });
-              setState({ userName: name });
+      showModal({
+        title: 'Welcome to Synapse',
+        body: bodyContainer,
+        buttons: [
+          {
+            text: 'Skip for now',
+            type: 'secondary',
+            onClick: (modal) => modal.close()
+          },
+          {
+            text: 'Let\'s go',
+            type: 'primary',
+            onClick: async (modal) => {
+              const input = document.getElementById('new-name-input');
+              const name = input ? input.value.trim() : '';
+              if (name) {
+                await db.user_profile.put({ id: 'default', name, createdAt: Date.now() });
+                setState({ userName: name });
+              }
+              modal.close();
             }
-            modal.close();
           }
-        }
-      ]
-    });
+        ]
+      });
+    }
+
+    const activeStudy = await getActiveStudySession();
+    if (activeStudy) {
+      setState({ activeStudySession: activeStudy });
+    }
+
+    const todayWaterScore = await getTodayWaterScore();
+    setState({ dailyWaterScore: todayWaterScore });
+
+    // Auto-merge duplicate goals (same exact subject name)
+    const merged = await mergeDuplicateGoals();
+    if (merged > 0) {
+      showToast(`🔄 Auto-merged ${merged} duplicate goal${merged !== 1 ? 's' : ''} into existing goals`);
+    }
+
+    // Silent PWA update check 3 seconds after paint
+    setTimeout(() => {
+      window.__pwaCheckForUpdates(false);
+    }, 3000);
+  } catch (err) {
+    console.error('❌ [App] Initialization failed:', err);
   }
-
-  const activeStudy = await getActiveStudySession();
-  if (activeStudy) {
-    setState({ activeStudySession: activeStudy });
-  }
-
-  const todayWaterScore = await getTodayWaterScore();
-  setState({ dailyWaterScore: todayWaterScore });
-
-  // Silent PWA update check 3 seconds after paint
-  setTimeout(() => {
-    window.__pwaCheckForUpdates(false);
-  }, 3000);
 }
 
 initializeApp();

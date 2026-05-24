@@ -4,8 +4,12 @@ import Dexie from 'dexie';
 // When accessing from mobile via LAN (HTTP), it throws. Fallback ensures
 // DB writes work everywhere, including non-HTTPS dev-server access.
 export function generateId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (_) {
+    // crypto.randomUUID() throws on Firefox over HTTP; fall through to fallback
   }
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
@@ -45,6 +49,20 @@ db.version(4).stores({
 // Upgrade to add date index for cross-day analysis queries
 db.version(5).stores({
   study_sessions: 'id, goal_id, date, start_time, end_time, goal_status_after, focus_quality'
+}).upgrade(async (tx) => {
+  // Backfill date field for sessions created before schema v5
+  const sessions = await tx.table('study_sessions').toArray();
+  for (const session of sessions) {
+    if (!session.date && session.start_time) {
+      session.date = new Date(session.start_time).toLocaleDateString('en-CA');
+      await tx.table('study_sessions').put(session);
+    }
+  }
+});
+
+// Upgrade to add goal_id index for deleteGoal / mergeDuplicateGoals queries
+db.version(6).stores({
+  active_sessions: 'id, session_type, goal_id'
 });
 
 // Exported DB health check — verifies IndexedDB is operational

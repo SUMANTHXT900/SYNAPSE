@@ -32,6 +32,12 @@ function toDayLabel(dateStr) {
   return days[new Date(dateStr + 'T00:00:00').getDay()];
 }
 
+function formatBarLabel(dateStr, dateRange) {
+  if (dateRange === '7days') return toDayLabel(dateStr);
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function formatDuration(totalMs) {
   const totalSeconds = Math.floor(totalMs / 1000);
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -49,6 +55,7 @@ function getTimePeriod(timestamp) {
   const h = new Date(timestamp).getHours();
   if (h < 12) return 'Morning';
   if (h < 17) return 'Afternoon';
+  if (h < 21) return 'Evening';
   return 'Night';
 }
 
@@ -63,7 +70,8 @@ export async function getAnalyticsData(dateRange = '7days') {
 
   const sessions = allSessions.filter(s => s.start_time >= bounds.start && s.start_time <= bounds.end);
   const logs = allLogs.filter(l => l.timestamp >= bounds.start && l.timestamp <= bounds.end);
-  const goals = allGoals;
+  const goalIdsInRange = new Set(sessions.map(s => s.goal_id));
+  const goals = allGoals.filter(g => goalIdsInRange.has(g.id));
 
   const hasData = sessions.length > 0 || logs.length > 0;
 
@@ -96,10 +104,6 @@ function getStudySummary(sessions) {
   const todayStr = toDateStr(Date.now());
   const todaySessions = completed.filter(s => toDateStr(s.start_time) === todayStr);
   const todayMs = todaySessions.reduce((sum, s) => sum + (s.end_time - s.start_time), 0);
-  const weekStart = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const weekMs = completed
-    .filter(s => s.start_time >= weekStart)
-    .reduce((sum, s) => sum + (s.end_time - s.start_time), 0);
   return {
     totalSessions,
     totalTime: totalMs,
@@ -108,7 +112,7 @@ function getStudySummary(sessions) {
     avgSessionLabel: formatDuration(avgMs),
     todayMinutes: Math.round(todayMs / 60000),
     todayLabel: formatDuration(todayMs),
-    weekLabel: formatDuration(weekMs)
+    periodLabel: formatDuration(totalMs)
   };
 }
 
@@ -143,7 +147,7 @@ function getWeeklyTrend(sessions, dateRange) {
   const maxVal = Math.max(...entries.map(([, v]) => v), 1);
   return entries.map(([date, ms]) => ({
     date,
-    label: toDayLabel(date),
+    label: formatBarLabel(date, dateRange),
     minutes: Math.round(ms / 60000),
     pct: Math.round((ms / maxVal) * 100)
   }));
@@ -160,7 +164,7 @@ function getFocusDistribution(sessions) {
     deep: { count: counts.deep, pct: Math.round((counts.deep / total) * 100) },
     okay: { count: counts.okay, pct: Math.round((counts.okay / total) * 100) },
     distracted: { count: counts.distracted, pct: Math.round((counts.distracted / total) * 100) },
-    total: completed.length
+    total: completed.length || 1
   };
 }
 
@@ -169,19 +173,6 @@ function getGoalPerformance(goals, sessions) {
   const completed = goals.filter(g => g.status === 'completed').length;
   const abandoned = goals.filter(g => g.status === 'abandoned').length;
   const pending = total - completed - abandoned;
-
-  const perGoal = goals.map(g => {
-    const gSessions = sessions.filter(s => s.goal_id === g.id && s.end_time != null);
-    const totalMs = gSessions.reduce((sum, s) => sum + (s.end_time - s.start_time), 0);
-    return {
-      id: g.id,
-      subject: g.subject,
-      status: g.status,
-      totalTime: formatDuration(totalMs),
-      totalMs,
-      sessions: gSessions.length
-    };
-  }).sort((a, b) => b.totalMs - a.totalMs);
 
   return {
     total,
@@ -210,7 +201,7 @@ function getPerGoalDetail(goals, sessions) {
 function getStudyStreak(allSessions) {
   const completed = allSessions.filter(s => s.end_time != null);
   const dateSet = new Set(completed.map(s => toDateStr(s.start_time)));
-  const dates = Array.from(dateSet).sort().reverse();
+  const dates = Array.from(dateSet).sort();
 
   let current = 0;
   const today = toDateStr(Date.now());
@@ -229,11 +220,10 @@ function getStudyStreak(allSessions) {
 
   let longest = 0;
   let streak = 0;
-  const sorted = dates.sort();
-  for (let i = 0; i < sorted.length; i++) {
+  for (let i = 0; i < dates.length; i++) {
     if (i === 0) { streak = 1; continue; }
-    const prev = new Date(sorted[i - 1] + 'T00:00:00');
-    const curr = new Date(sorted[i] + 'T00:00:00');
+    const prev = new Date(dates[i - 1] + 'T00:00:00');
+    const curr = new Date(dates[i] + 'T00:00:00');
     const diff = (curr - prev) / 86400000;
     if (diff === 1) {
       streak++;
@@ -340,7 +330,7 @@ function getHydrationTrend(logs, dateRange) {
   const maxVal = Math.max(...entries.map(([, v]) => v), 1);
   return entries.map(([date, score]) => ({
     date,
-    label: toDayLabel(date),
+    label: formatBarLabel(date, dateRange),
     score,
     pct: Math.round((score / maxVal) * 100)
   }));

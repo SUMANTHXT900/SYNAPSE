@@ -50,7 +50,13 @@ export function setState(updates) {
   }
 
   if (hasChanges) {
-    subscribers.forEach(callback => callback(getState(), changedKeys));
+    subscribers.forEach(callback => {
+      try {
+        callback(getState(), changedKeys);
+      } catch (err) {
+        console.error('❌ [State Manager] Error in subscriber callback:', err);
+      }
+    });
   }
 }
 

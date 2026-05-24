@@ -4,7 +4,7 @@ import { setState } from '../state.js';
 export async function getPendingGoals() {
   const goals = await db.goals
     .where('status')
-    .anyOf('pending', 'active', 'partial')
+    .equals('pending')
     .toArray();
 
   const goalsWithTime = await Promise.all(goals.map(async (goal) => {
@@ -25,14 +25,21 @@ export async function getPendingGoals() {
 
 export async function startStudySession(goalId, newSubject = null) {
   let targetGoalId = goalId;
+  let reusedGoal = false;
 
   if (newSubject) {
-    targetGoalId = generateId();
-    await db.goals.add({
-      id: targetGoalId,
-      subject: newSubject,
-      status: 'pending'
-    });
+    const existingGoal = await db.goals.where('subject').equals(newSubject).first();
+    if (existingGoal) {
+      targetGoalId = existingGoal.id;
+      reusedGoal = true;
+    } else {
+      targetGoalId = generateId();
+      await db.goals.add({
+        id: targetGoalId,
+        subject: newSubject,
+        status: 'pending'
+      });
+    }
   }
 
   const sessionId = generateId();
@@ -69,35 +76,43 @@ export async function startStudySession(goalId, newSubject = null) {
     }
   });
 
-  return sessionId;
+  return { sessionId, reusedGoal, goalSubject: newSubject };
 }
 
+let _stoppingStudy = false;
+
 export async function stopStudySession(sessionId, goalAction, focusQuality) {
-  const endTime = Date.now();
+  if (_stoppingStudy) return;
+  _stoppingStudy = true;
+  try {
+    const endTime = Date.now();
 
-  const updates = { end_time: endTime, goal_status_after: goalAction };
-  if (focusQuality != null) {
-    updates.focus_quality = focusQuality;
+    const updates = { end_time: endTime, goal_status_after: goalAction };
+    if (focusQuality != null) {
+      updates.focus_quality = focusQuality;
+    }
+
+    await db.study_sessions.update(sessionId, updates);
+
+    const session = await db.study_sessions.get(sessionId);
+
+    if (session && session.goal_id) {
+      let goalStatus = 'pending';
+      if (goalAction === 'completed') goalStatus = 'completed';
+      else if (goalAction === 'abandoned') goalStatus = 'abandoned';
+
+      await db.goals.update(session.goal_id, { status: goalStatus });
+    }
+
+    const activeRecords = await db.active_sessions.where({ session_type: 'study' }).toArray();
+    for (const record of activeRecords) {
+      await db.active_sessions.delete(record.id);
+    }
+
+    setState({ activeStudySession: null });
+  } finally {
+    _stoppingStudy = false;
   }
-
-  await db.study_sessions.update(sessionId, updates);
-
-  const session = await db.study_sessions.get(sessionId);
-
-  if (session && session.goal_id) {
-    let goalStatus = 'pending';
-    if (goalAction === 'completed') goalStatus = 'completed';
-    else if (goalAction === 'abandoned') goalStatus = 'abandoned';
-
-    await db.goals.update(session.goal_id, { status: goalStatus });
-  }
-
-  const activeRecords = await db.active_sessions.where({ session_type: 'study' }).toArray();
-  for (const record of activeRecords) {
-    await db.active_sessions.delete(record.id);
-  }
-
-  setState({ activeStudySession: null });
 }
 
 export async function getActiveStudySession() {
@@ -142,9 +157,38 @@ export async function updateGoal(goalId, newSubject) {
 }
 
 export async function deleteGoal(goalId) {
+  if (!goalId) throw new Error('deleteGoal: invalid goalId');
   return db.transaction('rw', db.goals, db.study_sessions, db.active_sessions, async () => {
     await db.study_sessions.where('goal_id').equals(goalId).delete();
     await db.active_sessions.where('goal_id').equals(goalId).delete();
     await db.goals.delete(goalId);
   });
+}
+
+export async function mergeDuplicateGoals() {
+  const goals = await db.goals.toArray();
+  const nameMap = {};
+  goals.forEach(g => {
+    if (!nameMap[g.subject]) nameMap[g.subject] = [];
+    nameMap[g.subject].push(g);
+  });
+
+  let mergedCount = 0;
+  for (const [subject, dupes] of Object.entries(nameMap)) {
+    if (dupes.length <= 1) continue;
+    const canonical = dupes[0];
+    for (const dup of dupes.slice(1)) {
+      const sessions = await db.study_sessions.where('goal_id').equals(dup.id).toArray();
+      for (const s of sessions) {
+        await db.study_sessions.update(s.id, { goal_id: canonical.id });
+      }
+      const active = await db.active_sessions.where('goal_id').equals(dup.id).toArray();
+      for (const a of active) {
+        await db.active_sessions.update(a.id, { goal_id: canonical.id });
+      }
+      await db.goals.delete(dup.id);
+      mergedCount++;
+    }
+  }
+  return mergedCount;
 }
